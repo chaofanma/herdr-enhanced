@@ -1,0 +1,37 @@
+Herdr Enhanced: Files Enhanced and Git Enhanced, mods for the Herdr app, and a layout with them
+
+This product includes software from Herdr (https://herdr.dev), licensed under the
+Apache License, Version 2.0 (see LICENSE). From the Herdr app 0.1.14, modified:
+
+- the Files mod that ships with it (mods/files): the base of
+  files-enhanced/mods/files-enhanced/ (main.js, tree.js, place.js, preview.js, the
+  listing in machine.js) and its icons chevron-down.svg, chevron-right.svg, file.svg
+  and folder.svg;
+- its menu mod (mods/menu): the base of files-enhanced/mods/files-enhanced/menu.js;
+- its prompt and confirm mods (mods/prompt, mods/confirm): the base of
+  files-enhanced/mods/files-enhanced/dialog.js;
+- the Changes mod that ships with it (mods/changes; its source is herdrdev/herdr-app,
+  defaults/mods/changes): the base of git-enhanced/mods/git-enhanced/ (main.js;
+  the pages in changes.js and historypage.js, where.js, diffpane.js, filelist.js,
+  commitbar.js, the read flags in scripts.js) and its icon changes.svg;
+- the interface icons of its workspace-chrome mod, copied into
+  files-enhanced/mods/files-enhanced/glyphs/ (among them check.svg, git-branch.svg, plus.svg,
+  square-pen.svg) and git-enhanced/mods/git-enhanced/ (check.svg,
+  git-branch.svg, plus.svg):
+  Lucide icons, ISC, as the Herdr app's THIRD-PARTY-NOTICES says; glyphs/spinner.svg is
+  Herdr's own;
+- from the Herdr app 0.1.15, its tab bar, the tabs mod (mods/tabs): the base of
+  herdr-enhanced/mods/tabs-enhanced/ (main.js; its icons win-close.svg, win-max.svg,
+  win-min.svg and win-restore.svg unchanged);
+- from the Herdr app 0.1.15, its worktree mod (mods/worktree): which space is in a worktree
+  (place, spaceOf), the base of spaceFor in git-enhanced/mods/git-enhanced/worktrees.js;
+- from the Herdr app 0.1.15, its main layout (layouts/main.json): the base of
+  herdr-enhanced/layouts/herdr-enhanced.json, every node and field Herdr's but the tab bar's
+  mod, the panel's pages and the preview's path;
+- the six theme palettes it ships (graphite, ink, moss, paper, atom-one-dark, win98), as its
+  theme() gives them, unchanged: the test data test/shared/themes.json.
+
+Each of those files but the palettes, the unchanged icons and the layout says at its top that it is
+based on Herdr's and changed; the layout's JSON can't, so herdr-enhanced/RECIPE.md says it. Other
+code adapted from other projects (VS Code, Material Icon Theme, lazygit, Cline) and the Lucide icons
+are listed with their licenses in THIRD_PARTY_NOTICES.md.
