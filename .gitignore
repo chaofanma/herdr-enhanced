@@ -1,0 +1,4 @@
+# herdr-app check writes these into the mod folder it checks.
+*/mods/*/gpui-kit.d.ts
+*/mods/*/jsconfig.json
+.DS_Store
