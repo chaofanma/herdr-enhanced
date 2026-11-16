@@ -1,6 +1,7 @@
 {
   "id": "root",
   "type": "row",
+  "preview": "layouts/herdr-enhanced.svg",
   "titlebar": "none",
   "traffic_lights": [
     12,
@@ -94,7 +95,7 @@
           },
           "window_drag": true,
           "content": {
-            "mod": "tabs"
+            "mod": "tabs-enhanced"
           }
         },
         {
@@ -151,14 +152,28 @@
                       "id": "files",
                       "type": "block",
                       "content": {
-                        "mod": "files"
+                        "mod": "files-enhanced"
                       }
                     },
                     {
                       "id": "changes",
                       "type": "block",
                       "content": {
-                        "mod": "changes"
+                        "mod": "git-enhanced",
+                        "props": {
+                          "palette": "theme"
+                        }
+                      }
+                    },
+                    {
+                      "id": "history",
+                      "type": "block",
+                      "content": {
+                        "mod": "git-enhanced",
+                        "props": {
+                          "palette": "theme",
+                          "view": "history"
+                        }
                       }
                     }
                   ]
