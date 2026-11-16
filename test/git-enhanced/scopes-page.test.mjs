@@ -1,0 +1,231 @@
+// What the page shows: the scopes (one commit, against a ref, back to the uncommitted changes, a ref
+// that went away), History's "Show in Changes" and "Compare with working tree", the Review tab in
+// a commit scope; and several repositories for one folder (the newest, the switcher, remembered per
+// folder, repoDepth, nested, none).
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync, utimesSync } from "node:fs";
+import { join } from "node:path";
+import { state, repo, mount, overlay, drawWith, draw, renderNow, byId, lists, renderRows, handler, press, texts, walk, settle, makeCx, at, load } from "./render/load.mjs";
+import { tempDir } from "./tmp.mjs";
+
+const { KEY, ID } = await load("id.js");
+const SETTINGS = "git-enhanced.settings";
+// A box's words, then ▾ when it ends with Herdr's chevron (the drop-down's mark).
+const said = (d) => { let mark = false; walk({ $: d.$ ?? d }, (x) => { if (x.kind === "svg" && x.path === "mods/workspace-chrome/chevron-down.svg") mark = true; }); return [...texts(d), ...(mark ? ["▾"] : [])]; };
+const byPopover = (tree, id) => { let hit = null; walk(tree, (n) => { if (n.popover === id) hit ??= n; }); return hit; };
+
+test("scopes: a commit (read-only, against its first parent), the root commit, Compare with…, back, a ref that went away", async () => {
+  const r = repo(({ write, git }) => {
+    write("a.txt", "one\n"); git("add", "-A"); git("commit", "-qm", "Root"); git("tag", "v1");
+    write("a.txt", "one\ntwo\n"); write("b.txt", "bee\n"); git("add", "-A"); git("commit", "-qm", "Second: two and b");
+    write("a.txt", "one\ntwo\nthree\n"); git("add", "-A"); git("commit", "-qm", "Third");
+  });
+  const sha = (rev) => r.git("rev-parse", rev).trim(), second = sha("HEAD~1"), root = sha("HEAD~2");
+  r.write("a.txt", "one\nTWO\nthree\n"); r.write("new.txt", "fresh\n");
+  state.shared.delete(KEY.scope);
+  let view = await mount(r.dir, { palette: "theme" }), page = view.part;
+  assert.equal(page.scope, "work");
+  assert.deepEqual(page.sections().map((s) => s.key), ["unstaged"]);
+  let tree = await draw(view);
+  handler(byPopover(tree, "scope"), "on_open_change")(true, makeCx());
+  tree = await draw(view);
+  assert.ok(texts(byId(tree, "scope-commit")).includes("A commit…"));
+  press(byId(tree, "scope-commit")); await settle();
+  assert.equal(page.scopeLists.kind, "commit");
+  assert.deepEqual(page.scopeLists.items.map((c) => c.subject), ["Third", "Second: two and b", "Root"]);
+  assert.ok(byId(await draw(view), "scope-filter"));
+  page.scopeLists.input.set_value("second");
+  tree = await draw(view);
+  assert.ok(byId(tree, "scope-row-0") && !byId(tree, "scope-row-1"));
+  press(byId(tree, "scope-row-0")); await settle();
+  assert.equal(page.scope, "commit"); assert.equal(page.scopeTarget, second);
+  assert.equal(page.to, second); assert.equal(page.ref, root, "against its first parent");
+  assert.deepEqual(state.shared.get(KEY.scope), { [`:${r.dir}`]: `commit:${second}` });
+  assert.deepEqual(page.files.map((f) => [f.path, f.status, f.add, f.del]), [["a.txt", "M", 1, 0], ["b.txt", "A", 1, 0]]);
+  assert.deepEqual(page.sections().map((s) => [s.key, s.label, s.rows.length]), [["committed", `Commit ${second.slice(0, 7)}`, 2]]);
+  assert.equal(page.open?.path, "a.txt");
+  assert.ok(page.diff.rows.some((x) => x.kind === "+" && x.text === "two"), "the commit's change, not the working tree's");
+  assert.deepEqual(page.hunkActions(), [], "read-only");
+  tree = await draw(view);
+  assert.ok(texts(tree).includes("read-only"));
+  assert.equal(byId(tree, "stage-all"), null);
+  let stageButtons = 0; walk(tree, (n) => { if (typeof n.id === "string" && /^stage-(unstaged|staged|untracked)-/.test(n.id)) stageButtons++; });
+  assert.equal(stageButtons, 0);
+  const before = state.overlays.length;
+  page.fileMenu("a.txt", "committed", makeCx()); await settle();
+  assert.equal(state.overlays.length, before, "no revert menu");
+  renderRows(lists(tree).find((l) => l.listId === "changes-diff"));
+  page.pick("b.txt", "committed", makeCx()); await settle();
+  assert.ok(page.diff.rows.some((x) => x.kind === "+" && x.text === "bee"));
+  assert.equal(page.scopeLabel(), `Commit ${second.slice(0, 7)}`);
+  assert.match(page.scopeWords(), /commit .* "Second: two and b" against its first parent/);
+  assert.equal(page.notesKey(), `:${r.dir}:commit:${second}`, "comments are per scope and target");
+  // A new copy starts on the remembered scope; the root commit is against the empty tree.
+  view = await mount(r.dir, { palette: "theme" }); page = view.part;
+  assert.equal(page.scope, "commit"); assert.equal(page.scopeTarget, second);
+  page.setScope("commit", makeCx(), root); await settle();
+  assert.equal(page.to, root); assert.match(page.ref, /^[0-9a-f]{40}$/);
+  assert.deepEqual(page.files.map((f) => f.path), ["a.txt"]);
+  assert.match(page.scopeWords(), /root commit/);
+  // Compare with…: refs and commits; Enter takes what is typed.
+  tree = await draw(view);
+  handler(byPopover(tree, "scope"), "on_open_change")(true, makeCx());
+  press(byId(await draw(view), "scope-ref")); await settle();
+  assert.ok(page.scopeLists.items.some((x) => x.kind === "tag" && x.name === "v1") && page.scopeLists.items.some((x) => x.kind === "branch"));
+  page.scopeLists.input.set_value("nope-ref");
+  for (const h of page.scopeLists.input.handlers.submit) h({}, makeCx());
+  await settle();
+  assert.match(page.scopeLists.error, /is no branch, tag or commit here/);
+  page.scopeLists.input.set_value("v1");
+  for (const h of page.scopeLists.input.handlers.submit) h({}, makeCx());
+  await settle();
+  assert.equal(page.scope, "ref"); assert.equal(page.scopeTarget, "v1"); assert.equal(page.to, null); assert.equal(page.ref, root);
+  assert.deepEqual(page.files.map((f) => [f.path, f.status]), [["a.txt", "M"], ["b.txt", "A"], ["new.txt", "A"]], "the working tree against v1, new files too");
+  assert.deepEqual(page.hunkActions(), []);
+  assert.equal(page.open?.path, "a.txt");
+  assert.ok(page.diff.rows.some((x) => x.kind === "+" && x.text === "TWO"));
+  assert.equal(page.scopeLabel(), "vs v1");
+  press(byId(await draw(view), "scope-uncommitted")); await settle();
+  assert.equal(page.scope, "work"); assert.equal(page.scopeTarget, null); assert.equal(page.to, null);
+  if (!(page.open?.path === "a.txt" && page.open?.section === "unstaged")) { page.pick("a.txt", "unstaged", makeCx()); await settle(); }
+  assert.deepEqual(page.hunkActions().map((a) => a.id), ["stage", "revert"]);
+  assert.ok(byId(await draw(view), "stage-all"));
+  // A remembered ref that is gone: back to the uncommitted changes.
+  r.git("branch", "gone");
+  state.shared.set(KEY.scope, { [`:${r.dir}`]: "ref:gone" });
+  view = await mount(r.dir, { palette: "theme" }); page = view.part;
+  assert.equal(page.scope, "ref");
+  r.git("branch", "-D", "gone");
+  page.refresh(makeCx("async")); await settle();
+  assert.equal(page.scope, "work");
+  assert.deepEqual(state.violations, []);
+});
+
+test("History's Show in Changes and Compare with working tree; a Review tab and another repository ignore them; Viewed in a commit scope", async () => {
+  const r = repo(({ write, git }) => {
+    write("a.txt", "one\n"); git("add", "-A"); git("commit", "-qm", "Root");
+    write("a.txt", "one\ntwo\n"); write("b.txt", "bee\n"); git("add", "-A"); git("commit", "-qm", "Second: two and b");
+    write("a.txt", "one\ntwo\nthree\n"); git("add", "-A"); git("commit", "-qm", "Third");
+  });
+  const sha = (rev) => r.git("rev-parse", rev).trim(), second = sha("HEAD~1"), root = sha("HEAD~2");
+  state.shared.delete(KEY.scope);
+  state.layout = { id: "root", type: "row", children: [{ id: "panel-body", type: "stack", children: [
+    { id: "history", type: "block", content: { mod: ID, props: { view: "history" } } },
+    { id: "changes", type: "block", content: { mod: ID, props: { palette: "theme" } } }] }] };
+  const view = await mount(r.dir, { palette: "theme" }), page = view.part;
+  const C = { root: r.dir, on: null, sha: second, short: second.slice(0, 7), subject: "Second: two and b", parents: [root], branch: "main", head: sha("HEAD") };
+  const choose = async (id) => {
+    const m = overlay({ props: { commitMenu: C } }); await settle();
+    const tree = drawWith(m.view, m.props);
+    assert.ok(texts(tree).includes("Show in Changes") && texts(tree).includes("Compare with working tree"));
+    const saved = state.props; state.props = m.props;
+    press(byId(tree, id));
+    state.props = saved;
+  };
+  await choose("commit-show-changes");
+  assert.deepEqual(state.runs.at(-1), ["layout.select", { stack: "panel-body", child: "changes" }]);
+  assert.equal(state.shared.get(KEY.show).target, second);
+  renderNow(view); await settle();
+  assert.equal(page.scope, "commit"); assert.equal(page.scopeTarget, second);
+  await choose("commit-compare");
+  renderNow(view); await settle();
+  assert.equal(page.scope, "ref"); assert.equal(page.scopeTarget, second);
+  const other = repo(({ write, git }) => { write("x", "x\n"); git("add", "-A"); git("commit", "-qm", "x"); });
+  state.shared.delete(KEY.scope);
+  const tab = await mount(r.dir, { palette: "theme", review: true, root: r.dir });
+  assert.equal(tab.part.scope, "work");
+  const elsewhere = await mount(other.dir, { palette: "theme" });
+  await choose("commit-show-changes");
+  renderNow(elsewhere); renderNow(tab); await settle();
+  assert.equal(elsewhere.part.scope, "work", "another repository's page ignores it");
+  assert.equal(tab.part.scope, "work", "a Review tab ignores it");
+  state.layout = null;
+  state.shared.set(KEY.scope, { [`:${r.dir}`]: `commit:${second}` });
+  const review = await mount(r.dir, { palette: "theme", review: true, root: r.dir }), rp = review.part;
+  assert.equal(rp.scope, "commit");
+  assert.ok(rp.hashes instanceof Map && rp.hashes.has("a.txt") && rp.hashes.has("b.txt"), "the hashes of the commit's diffs");
+  rp.toggleViewed("a.txt");
+  assert.equal(rp.isViewed("a.txt"), true);
+  renderRows(lists(await draw(review)).find((l) => l.listId === "changes-diff"));
+  state.shared.delete(KEY.scope);
+  assert.deepEqual(state.violations, []);
+});
+
+test("several repositories for one folder: the newest below it, the switcher, remembered per folder, repoDepth, nested, none", async () => {
+  const base = tempDir("git-enhanced-repos-");
+  const sh = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const mk = (dir, file, when) => {
+    mkdirSync(dir, { recursive: true }); sh(dir, "init", "-q");
+    sh(dir, "config", "user.name", "t"); sh(dir, "config", "user.email", "t@t"); sh(dir, "config", "core.hooksPath", "/dev/null");
+    writeFileSync(join(dir, file), `${file}\n`); sh(dir, "add", "-A");
+    execFileSync("git", ["commit", "-qm", file], { cwd: dir, env: { ...process.env, GIT_AUTHOR_DATE: `${when} +0000`, GIT_COMMITTER_DATE: `${when} +0000` } });
+    const t = new Date(when * 1000); utimesSync(join(dir, ".git", "index"), t, t);
+    return dir;
+  };
+  state.shared.delete(KEY.repo); state.shared.delete(SETTINGS);
+  const work = join(base, "work");
+  const older = mk(join(work, "older"), "o.txt", 1_600_000_000), newer = mk(join(work, "newer"), "n.txt", 1_700_000_000);
+  mkdirSync(join(work, "node_modules", "dep"), { recursive: true }); mk(join(work, "node_modules", "dep2"), "d.txt", 1_800_000_000);
+  writeFileSync(join(newer, "n.txt"), "changed\n");
+  let view = await mount(work, { palette: "theme" }), page = view.part;
+  assert.equal(page.error, null, String(page.error));
+  assert.equal(page.root, newer, "the most recently changed repository below the folder");
+  assert.deepEqual(page.repoSet.list(), [newer, older], "node_modules skipped");
+  let tree = await draw(view);
+  assert.deepEqual(said(byId(tree, "repo-box")), ["newer", "▾"]);
+  handler(byPopover(tree, "repo-list"), "on_open_change")(true, makeCx()); await settle();
+  tree = await draw(view);
+  const rows = [0, 1].map((i) => texts(byId(tree, `repo-${i}`)));
+  assert.ok(rows[0].includes("newer") && rows[0].some((x) => /master|main/.test(x) && /1 changed/.test(x)), JSON.stringify(rows[0]));
+  assert.ok(rows[1].includes("older") && rows[1].some((x) => /clean/.test(x)), JSON.stringify(rows[1]));
+  press(byId(tree, "repo-1"));
+  assert.deepEqual(state.shared.get(KEY.repo), { [`:${work}`]: older });
+  assert.doesNotThrow(() => renderNow(view)); await settle();
+  assert.equal(page.root, older); assert.deepEqual(page.files, []);
+  page.openReview(makeCx());
+  assert.equal(state.runs.at(-1)[1].props.root, older, "the Review tab opens on the picked one");
+  assert.equal((await mount(work, { palette: "theme" })).part.root, older, "another copy shows the remembered one");
+  state.shared.set(KEY.repo, { [`:${work}`]: older, [`:${newer}`]: older });
+  const tab = await mount(newer, { palette: "theme", review: true, root: newer });
+  assert.equal(tab.part.root, newer, "a Review tab stays on its own repository");
+  assert.equal(tab.part.repoSet.many(), false);
+  state.shared.delete(KEY.repo);
+  const top = mk(join(base, "top"), "t.txt", 1_650_000_000), nested = mk(join(top, "packages", "api"), "a.txt", 1_750_000_000);
+  mk(join(top, "lib"), "l.txt", 1_700_000_000);
+  view = await mount(top, { palette: "theme" }); page = view.part;
+  assert.equal(page.root, top, "the folder's own repository first");
+  assert.deepEqual(page.repoSet.list(), [top, join(top, "lib")], "depth 1: packages/api is two down");
+  state.shared.set(SETTINGS, { repoDepth: 2 });
+  view = await mount(top, { palette: "theme" }); page = view.part;
+  assert.deepEqual(page.repoSet.list(), [top, join(top, "lib"), nested]);
+  tree = await draw(view);
+  handler(byPopover(tree, "repo-list"), "on_open_change")(true, makeCx()); await settle();
+  press(byId(await draw(view), "repo-2"));
+  renderNow(view); await settle();
+  assert.equal(page.root, nested);
+  handler(byPopover(await draw(view), "repo-list"), "on_open_change")(true, makeCx()); await settle();
+  press(byId(await draw(view), "repo-0"));
+  assert.deepEqual(state.shared.get(KEY.repo), {}, "back to the folder's own: forgotten");
+  renderNow(view); await settle();
+  assert.equal(page.root, top);
+  state.shared.set(SETTINGS, { repoDepth: 0 });
+  view = await mount(top, { palette: "theme" });
+  assert.equal(view.part.repoSet.many(), false);
+  assert.equal(byId(await draw(view), "repo-box"), null);
+  state.shared.delete(SETTINGS);
+  assert.equal((await mount(nested, { palette: "theme" })).part.root, nested, "inside a nested repository: that one");
+  const empty = join(base, "empty"); mkdirSync(join(empty, "a"), { recursive: true });
+  view = await mount(empty, { palette: "theme" });
+  assert.equal(view.part.error, "Not a git repository");
+  assert.ok(texts(byId(await draw(view), "changes-list")).includes("Not a git repository"));
+  const single = join(base, "single"); mk(join(single, "only"), "x.txt", 1_600_000_000);
+  view = await mount(single, { palette: "theme" }); page = view.part;
+  assert.equal(page.root, join(single, "only"));
+  assert.deepEqual(said(byId(await draw(view), "repo-box")), ["only", "▾"]);
+  at(work);
+  assert.doesNotThrow(() => renderNow(view)); await settle();
+  assert.equal(page.root, newer, "the folder changed: the scan follows, not from the render");
+  assert.deepEqual(state.violations, []);
+});
